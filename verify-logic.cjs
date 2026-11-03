@@ -76,9 +76,16 @@ console.log('PASS: independent copy contains full event; reuse requires whole-se
 const drafts=context('events.js');run(drafts,"openEvent('batch-example');eventDraft.targets.find(t=>t.port===5).action='Latch';openEvent('batch-example',6);eventDraft.targets[0].action='Delay';eventDraft.targets[0].delay=11;saveEvent();openEvent('batch-example');");
 assert.equal(run(drafts,"eventDraft.targets.find(t=>t.port===5).action"),'Latch');assert.equal(run(drafts,"eventDraft.targets.find(t=>t.port===4).delay"),11);run(drafts,'saveEvent();');
 run(drafts,"eventDraft.targets.find(t=>t.port===4).delay=22;openEvent('batch-example',6);eventDraft.targets[0].delay=33;saveEvent();openEvent('batch-example');");assert.equal(run(drafts,'eventDraft.conflicts.length'),1);assert.match(run(drafts,'validateEvent()'),/差异/);run(drafts,"resolveEventConflict(0,'saved');");assert.equal(run(drafts,"eventDraft.targets.find(t=>t.port===4).delay"),33);
-for(const action of ['Mimic','Delay'])for(const value of [0,256,-1,1.5,null]){run(drafts,`openEvent('batch-example',6);eventDraft.targets[0].action='${action}';eventDraft.targets[0].${action==='Mimic'?'duration':'delay'}=${value};`);assert.match(run(drafts,'validateEvent()'),/1～255/)}
-for(const action of ['Momentary','Latch']){run(drafts,`eventDraft.targets[0].action='${action}';`);assert.equal(run(drafts,'validateEvent()'),'');assert.equal(run(drafts,"eventEditor().includes('data-target-time=\"0\"')"),false)}
-const handoff=context('events.js');run(handoff,"let pick;function openDevicePicker(opts){pick=opts};sessionStorage.setItem('iced-relation-drafts',JSON.stringify({'board:new':{name:'',scheduleId:'demo-night',inputs:{},eventIds:[]}}));window.confirm=()=>false;startRelationWithEvents(['batch-example']);pick.onSelect('board');");assert.equal(run(handoff,'location.href'),'');
+for(const action of ['Momentary','Mimic','Latch','Delay']){
+ run(drafts,`openEvent('batch-example',6);eventDraft.targets[0].action='${action}';eventDraft.targets[0].delay=5;`);
+ for(const value of [-1,1.5,null,256]){run(drafts,`eventDraft.targets[0].duration=${value};`);assert.match(run(drafts,'validateEvent()'),/启动延迟/)}
+ for(const value of [0,255]){run(drafts,`eventDraft.targets[0].duration=${value};`);assert.equal(run(drafts,'validateEvent()'),'')}
+ run(drafts,'eventDraft.targets[0].duration=0;');
+ assert.match(run(drafts,'eventEditor()'),/min="0" max="255"/);
+ assert.match(run(drafts,'eventEditor()'),/data-time-key="duration"/);
+ assert.equal(run(drafts,`actionFields(eventDraft.targets[0],0).includes('data-time-key="delay"')`),action==='Delay');
+}
+for(const value of [0,256,-1,1.5,null]){run(drafts,`eventDraft.targets[0].delay=${value};`);assert.match(run(drafts,'validateEvent()'),/1～255/)}
 console.log('PASS: draft merge/conflicts, unchanged action timing boundaries, schedule-only draft protection.');
 const boundaries=context('relations.js');run(boundaries,"openEdit();draft.name='边界';draft.scheduleId='demo-all';draft.inputs={1:'高电平'};draft.eventIds=['event-1'];db.rules.board=Array.from({length:20},(_,i)=>({id:i+1,name:'R'+i,scheduleId:'demo-all',inputs:{1:'高电平'},eventIds:['event-1']}));");assert.match(run(boundaries,'validateRule()'),/20/);
 const cleanup=context('events.js');run(cleanup,"sessionStorage.setItem('iced-relation-drafts',JSON.stringify({'board:new':{name:'暂存',scheduleId:'demo-all',inputs:{1:'高电平'},eventIds:['batch-example']}}));askDeleteEvents([6,7,8]);deletePendingEvents();");assert.equal(run(cleanup,"groupById('batch-example').events.length"),3);run(cleanup,"sessionStorage.removeItem('iced-relation-drafts');askDeleteEvents([6,7,8]);deletePendingEvents();");assert.equal(run(cleanup,"groupById('batch-example')"),undefined);run(cleanup,'undoEventDeletion();');assert.equal(run(cleanup,"groupById('batch-example').events.length"),3);
@@ -113,7 +120,7 @@ console.log('PASS: referenced member removal preserves event reference; final �
 // Change review exposes exact actions/times and other relations without imposing arbitration.
 const impact=context('events.js');run(impact,"openEvent('event-2');eventDraft.targets[0].delay=12;eventDraft.targets.push({device:'board',port:1,action:'Latch'});askEventSave();");
 const impactHtml=run(impact,"$('#impactDialog').innerHTML");
-for(const pattern of [/修改前/,/修改后/,/3 秒/,/12 秒/,/本关系的事件包含/,/Momentary/,/Latch/,/另有/,/通风设备联动/])assert.match(impactHtml,pattern);
+for(const pattern of [/修改前/,/修改后/,/5 秒/,/12 秒/,/本关系的事件包含/,/Momentary/,/Latch/,/另有/,/通风设备联动/])assert.match(impactHtml,pattern);
 const shared=context('relations.js');run(shared,'openEdit(2);');assert.match(run(shared,'editor()'),/另有 1 条已保存关系控制相同输出/);
 console.log('PASS: exact parameter changes, overlapping event actions and cross-relation controls visible; last-trigger semantics retained.');
 
@@ -178,7 +185,42 @@ assert.equal(run(drawer,"$('#eventEditDialog').open"),false);
 assert.equal(run(drawer,"eventGroups().filter(g=>g.name==='侧栏新增检查').length"),1);
 run(drawer,"openEvent('event-2');eventDraft.targets[0].delay=22;askEventSave();");
 assert.equal(run(drawer,"$('#impactDialog').open && $('#eventEditDialog').open"),true);
-assert.equal(run(drawer,'ev(2).delay'),3,'impact confirmation precedes saving');
+assert.equal(run(drawer,'ev(2).delay'),5,'impact confirmation precedes saving');
 run(drawer,'saveEvent();');assert.equal(run(drawer,'ev(2).delay'),22);
 assert.equal(run(drawer,"$('#eventEditDialog').open"),false);
 console.log('PASS: drawer entry, close/resume/refresh, cancel, validation, successful save and nested impact confirmation.');
+
+// Common startup delay applies to every mode; Delay holds output after startup.
+const timing=context('events.js');
+for(const action of ['Momentary','Mimic','Latch','Delay']){
+ run(timing,`openEvent(null);reconcileEventTargets([{device:'board',port:9}]);eventDraft.name='时序-${action}';eventDraft.targets[0].action='${action}';eventDraft.targets[0].delay=5;`);
+ assert.equal(run(timing,'eventDraft.targets[0].duration'),0);
+ run(timing,'eventDraft.targets[0].duration=3;saveEvent();');
+ assert.equal(run(timing,'eventDraft.targets[0].duration'),3);
+ assert.equal(run(timing,'validateEvent()'),'');
+}
+assert.match(run(timing,"timeText({action:'Momentary',duration:0})"),/立即启动.*100ms/);
+assert.match(run(timing,"timeText({action:'Delay',duration:3,delay:5})"),/启动延迟 3 秒.*持续 5 秒后停止/);
+assert.match(run(timing,"ACTION_INFO.Delay.description"),/N 从实际开始输出时计时/);
+assert.match(run(timing,"timeText({action:'Mimic',duration:3})"),/到期不执行输出/);
+assert.match(run(timing,"ACTION_INFO.Mimic.description"),/延迟到期后不执行输出/);
+assert.match(run(timing,"timeText({action:'Latch',duration:256})"),/待填写/);
+for(const delay of [1,255])assert.equal(run(timing,`actionTimeError({action:'Delay',duration:255,delay:${delay}})`),'');
+run(timing,"openEvent('batch-example');eventDraft.duration=3;eventDraft.action='Delay';eventDraft.delay=5;applyBulkActions();saveEvent();copyCurrentEvent();");
+assert.equal(run(timing,'eventDraft.targets.every(t=>t.duration===3&&t.delay===5)'),true);
+// Different common delays prevent incorrect whole-event deduplication.
+run(timing,"request=null;eventDraft=null;openEvent(null);eventDraft.name='不同时序';eventDraft.targets=groupById('batch-example').events.map(savedTarget);eventDraft.targets[0].duration=4;");
+assert.equal(run(timing,'duplicateCompleteEvent()'),null);
+const oldTiming=run(timing,"const legacyTimes=clone(db);delete legacyTimes.timingModel;legacyTimes.events.find(e=>e.id===2).delay=7;legacyTimes.events.find(e=>e.id===2).duration=null;legacyTimes.events.find(e=>e.id===3).duration=6;JSON.stringify(legacyTimes)");
+const oldEventDraft={name:'通风设备联动',action:'Delay',duration:null,delay:7,targets:[{device:'board',port:2,action:'Delay',duration:null,delay:7}],memberIds:[2],base:{name:'通风设备联动',memberIds:[2],targets:[{device:'board',port:2,action:'Delay',duration:null,delay:7}]}};
+const converted=context('events.js',{'iced-io-prototype-v2':oldTiming,'iced-event-drafts':JSON.stringify({'group:event-2':oldEventDraft})});
+assert.equal(run(converted,'ev(2).duration'),7);assert.equal(run(converted,'ev(2).delay'),null);
+assert.equal(run(converted,'ev(3).duration'),null,'old stop delay cannot become a startup delay');
+assert.equal(run(converted,"readSession('iced-before-startup-duration-v2',{}).db.events.find(e=>e.id===3).duration"),6);
+assert.equal(run(converted,"eventDrafts['group:event-2'].targets[0].duration"),7);
+assert.equal(run(converted,"eventDraftDirty(eventDrafts['group:event-2'])"),false,'base and draft migrate together');
+run(converted,"openEvent('event-2');eventDraft.targets[0].delay=5;saveEvent();");
+const newTiming=run(converted,"sessionStorage.getItem('iced-io-prototype-v2')");
+const convertedAgain=context('events.js',{'iced-io-prototype-v2':newTiming});
+assert.equal(run(convertedAgain,'ev(2).duration'),7);assert.equal(run(convertedAgain,'ev(2).delay'),5);
+console.log('PASS: all-mode startup delay/default zero, 100ms pulse, Delay hold, bulk/copy/dedup and one-time legacy timing migration.');

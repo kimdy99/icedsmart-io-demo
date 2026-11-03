@@ -16,17 +16,23 @@ const scheduleName=r=>scheduleById(r.scheduleId)?.name||(r.scheduleId?'时间表
 const scheduleSummary=r=>scheduleById(r.scheduleId)?.summary||(r.scheduleId?'请重新选择有效时间表':'请为本关系选择时间表');
 const ACTIONS=['Momentary','Mimic','Latch','Delay'];
 const ACTION_INFO={
-  Momentary:{name:'点动模式',description:'触发一次输出后立即停止，无需设置时间。'},
-  Mimic:{name:'联动模式',description:'输入有持续信号时，输出持续触发。设置 Duration 后，输入信号消失时开始计时，经过设定时间后停止输出。'},
-  Latch:{name:'始终模式',description:'输入有信号时触发输出，保持触发，直到在软件中人工关闭输出。'},
-  Delay:{name:'延时模式',description:'输入有信号后开始计时，经过设定的 Delay 时间后触发输出。'}
+  Momentary:{name:'点动模式',description:'等待启动延迟后，输出 100ms，然后停止。'},
+  Mimic:{name:'联动模式',description:'等待启动延迟后，跟随输入信号控制输出。等待期间输入信号消失，延迟到期后不执行输出。'},
+  Latch:{name:'始终模式',description:'等待启动延迟后，输出保持打开，直到在软件中人工关闭。'},
+  Delay:{name:'延时模式',description:'等待启动延迟后开始输出，持续 N 秒后停止。N 从实际开始输出时计时。'}
 };
 const actionLabel=a=>ACTION_INFO[a]?a+' · '+ACTION_INFO[a].name:(a||'');
-function actionTimeError(e){if(!e)return '事件不可用。';const key=e.action==='Mimic'?'duration':e.action==='Delay'?'delay':null;if(!key)return '';return Number.isInteger(e[key])&&e[key]>=1&&e[key]<=255?'':(key==='duration'?'Duration（信号消失后延后停止时间）':'Delay（延时触发时间）')+'须为 1～255 秒的整数。'}
-function actionTiming(e){return {duration:e.action==='Mimic'?e.duration:null,delay:e.action==='Delay'?e.delay:null}}
-const seed={events:[{id:1,name:'声光报警输出',device:'board',port:1,action:'Momentary',duration:10,delay:0},{id:2,name:'通风设备联动',device:'board',port:2,action:'Delay',duration:30,delay:3},{id:3,name:'值班室提示',device:'board',port:3,action:'Mimic',duration:5,delay:0},{id:4,name:'控制器报警输出',device:'builtin',port:1,action:'Latch',duration:10,delay:0},{id:5,name:'备用报警提示',device:'board',port:1,action:'Delay',duration:5,delay:2}],rules:{board:[{id:1,inputs:{1:'高电平',2:'低电平'},outputs:[{device:'board',port:1,event:1},{device:'board',port:2,event:2}]},{id:2,inputs:{3:'高电平'},outputs:[{device:'board',port:2,event:2}]},{id:3,inputs:{4:'低电平'},outputs:[{device:'board',port:3,event:3}]}],builtin:[{id:4,inputs:{1:'高电平',2:'低电平'},outputs:[{device:'builtin',port:1,event:4}]}],empty:[]}};
+function actionTimeError(e){
+ if(!e)return '事件不可用。';
+ const duration=e.duration===undefined?0:e.duration;
+ if(!Number.isSafeInteger(duration)||duration<0||duration>255)return '启动延迟（Duration）须为 0～255 秒的整数。';
+ if(e.action==='Delay'&&(!Number.isInteger(e.delay)||e.delay<1||e.delay>255))return '输出持续时间（N）须为 1～255 秒的整数。';
+ return '';
+}
+function actionTiming(e){return {duration:e.duration===undefined?0:e.duration,delay:e.action==='Delay'?e.delay:null}}
+const seed={timingModel:'startup-duration-v2',events:[{id:1,name:'声光报警输出',device:'board',port:1,action:'Momentary',duration:0,delay:null},{id:2,name:'通风设备联动',device:'board',port:2,action:'Delay',duration:3,delay:5},{id:3,name:'值班室提示',device:'board',port:3,action:'Mimic',duration:0,delay:null},{id:4,name:'控制器报警输出',device:'builtin',port:1,action:'Latch',duration:0,delay:null},{id:5,name:'备用报警提示',device:'board',port:1,action:'Delay',duration:0,delay:2}],rules:{board:[{id:1,inputs:{1:'高电平',2:'低电平'},outputs:[{device:'board',port:1,event:1},{device:'board',port:2,event:2}]},{id:2,inputs:{3:'高电平'},outputs:[{device:'board',port:2,event:2}]},{id:3,inputs:{4:'低电平'},outputs:[{device:'board',port:3,event:3}]}],builtin:[{id:4,inputs:{1:'高电平',2:'低电平'},outputs:[{device:'builtin',port:1,event:4}]}],empty:[]}};
 // 初始示例明确属于同一批量配置组；已有会话不自动归并。
-seed.events.push(...[{device:'board',port:4},{device:'board',port:5},{device:'builtin',port:2}].map((o,i)=>({id:6+i,group:'batch-example',name:'机房报警提示',action:'Momentary',duration:10,delay:0,...o})));
+seed.events.push(...[{device:'board',port:4},{device:'board',port:5},{device:'builtin',port:2}].map((o,i)=>({id:6+i,group:'batch-example',name:'机房报警提示',action:'Momentary',duration:0,delay:null,...o})));
 for(const e of seed.events)Object.assign(e,actionTiming(e));
 for(const r of Object.values(seed.rules).flat())r.scheduleId=r.id===2?'demo-work':r.id===3?'demo-night':'demo-all';
 let db;try{db=JSON.parse(sessionStorage.getItem('iced-io-prototype-v2'))||clone(seed)}catch{db=clone(seed)}
@@ -34,7 +40,37 @@ let db;try{db=JSON.parse(sessionStorage.getItem('iced-io-prototype-v2'))||clone(
 let migratedActions=false;
 for(const e of db.events){if(!ACTIONS.includes(e.action)){e.action=e.delay>0?'Delay':'Momentary';migratedActions=true}}
 if(migratedActions)sessionStorage.setItem('iced-io-prototype-v2',JSON.stringify(db));
-function timeText(e){if(!e)return '';if(e.action==='Momentary')return '触发一次后立即停止';if(e.action==='Latch')return '保持触发，直至软件人工关闭';if(e.action==='Mimic')return actionTimeError(e)?'停止延后时间待设置（1～255 秒）':`输入信号消失后 ${e.duration} 秒停止`;if(e.action==='Delay')return actionTimeError(e)?'延时触发时间待设置（1～255 秒）':`输入有信号后 ${e.delay} 秒触发`;return ''}
+// 旧示例使用了不同的时间含义。保留原始数据，不能将停止延迟静默改为启动延迟。
+if(db.timingModel!=='startup-duration-v2'){
+ const keys=['iced-event-drafts','iced-deleted-events','iced-event-request'];
+ const backup={db:clone(db),...Object.fromEntries(keys.map(key=>[key,readSession(key,null)]))};
+ sessionStorage.setItem('iced-before-startup-duration-v2',JSON.stringify(backup));
+ function convertOldTiming(value,inherited=null){
+  if(!value||typeof value!=='object')return;
+  if(Array.isArray(value)){value.forEach(item=>convertOldTiming(item,inherited));return}
+  const old=ACTIONS.includes(value.action)?{action:value.action,duration:value.duration,delay:value.delay}:inherited;
+  for(const [key,child] of Object.entries(value))if(child&&typeof child==='object')convertOldTiming(child,key==='targets'?old:null);
+  if(ACTIONS.includes(value.action)||(old&&value.device&&value.port)){
+   value.action=old.action;
+   value.duration=old.action==='Delay'?(old.delay??null):old.action==='Mimic'?null:0;
+   value.delay=null;
+  }
+ }
+ db.events.forEach(e=>convertOldTiming(e));
+ for(const key of keys){const value=backup[key];if(value){convertOldTiming(value);sessionStorage.setItem(key,JSON.stringify(value))}}
+ db.timingModel='startup-duration-v2';persist();
+}
+function timingReviewNotice(){const pending=db.events.filter(e=>actionTimeError(e)).length;return pending?`<div class="context-note" role="status">${pending} 个输出的时间参数待核对。Duration 现为启动延迟；Delay 模式另设输出持续时间。旧演示时间无法直接对应的参数已留空，请编辑事件补全。</div>`:''}
+function timeText(e){
+ if(!e)return '';
+ const duration=e.duration===undefined?0:e.duration;
+ const start=Number.isSafeInteger(duration)&&duration>=0&&duration<=255?(duration===0?'立即启动':`启动延迟 ${duration} 秒`):'启动延迟待填写';
+ if(e.action==='Momentary')return `${start} · 输出 100ms 后停止`;
+ if(e.action==='Latch')return `${start} · 保持打开，直至人工关闭`;
+ if(e.action==='Mimic')return `${start} · 跟随输入信号；等待期间信号消失，到期不执行输出`;
+ if(e.action==='Delay')return `${start} · ${Number.isInteger(e.delay)&&e.delay>=1&&e.delay<=255?`输出持续 ${e.delay} 秒后停止`:'输出持续时间待填写'}`;
+ return '';
+}
 const dev=id=>devices.find(d=>d.id===id);const ev=id=>db.events.find(e=>e.id===Number(id));
 function persist(){sessionStorage.setItem('iced-io-prototype-v2',JSON.stringify(db))}
 function toast(t){$('#toast').textContent=t;$('#toast').hidden=false;clearTimeout(window.toastTimer);window.toastTimer=setTimeout(()=>$('#toast').hidden=true,2800)}

@@ -63,4 +63,4 @@ function copyRule(id){
  remember();selected=null;draft=clone(original);draft.id=null;delete draft._eventContext;draft.name=(original.name+'（副本）').slice(0,50);error='';remember();showEditor();remember();
 }
 
-function migrationNotice(){const notice=readSession('iced-complete-event-migration',null);return notice?`<div class="context-note">旧预览中 ${notice.expanded} 条关系已改为执行所选事件的完整内容，请核对执行清单。原预览数据已备份。<button class="link" data-action="dismissmigration">知道了</button></div>`:''}
+function migrationNotice(){const timing=timingReviewNotice();const notice=readSession('iced-complete-event-migration',null);return timing+(notice?`<div class="context-note">旧预览中 ${notice.expanded} 条关系已改为执行所选事件的完整内容，请核对执行清单。原预览数据已备份。<button class="link" data-action="dismissmigration">知道了</button></div>`:'')}
